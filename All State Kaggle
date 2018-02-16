@@ -1,0 +1,244 @@
+
+setwd("/home/ubuntu")
+
+
+library(data.table)
+train <- fread("train.csv")
+
+
+library(sqldf)
+
+
+train$new<-sqldf(
+  
+  "
+  select
+  case when cat115 in ('A','B','C','D','E','F','G','H','I') then 'M'
+  when cat115 in ('I','J','K','L','M','N','O','P') then 'AN'
+  else 'NT' 
+  END as time
+  from train"
+)
+
+ 
+num_train <- names(which(  sapply(train,is.numeric)))
+num_train<- setdiff(num_train,c("id"))
+num_train
+cat_train <- names(which(  sapply(train,is.character)))
+cat_train
+
+
+
+train_num_data <- train[,.SD,.SDcols=num_train]
+train_cat_data <- train[,.SD,.SDcols=cat_train]
+
+
+# Split the categorical variables to hot one encoding 
+
+train_cat_data <- train[,.SD,.SDcols=cat_train]
+for (j in 1:117)
+  
+{
+  
+  y<-matrix(0,nrow(train_cat_data),length(unique(train_cat_data[[j]])))
+  
+  c<-unique(train_cat_data[[j]])
+  for (i in 1:length(c)) # for each unique value in a column
+  { 
+    y[which(train_cat_data[[j]] == c[i]),i]<-1
+  }
+  colnames(y)<-paste(names(train_cat_data)[j],unique(train_cat_data[[j]]),sep="")
+  
+  print(i)
+  print(j)
+  colnames(y)
+  train_cat_data<-cbind(train_cat_data,y)
+}
+
+
+temp <- data.frame(train_cat_data      )
+ctemp<-temp[-c(1:117)]
+temp<-ctemp
+temp <- cbind(temp,c(train_num_data))
+
+temp <- temp[,-c(755:777)]
+temp <- temp[,-c(791:813)]
+
+traincol <- data.table(colnames(temp))
+testcol <-data.table(colnames(tempt))
+
+colnames(traincol)<-'cat'
+colnames(testcol)<-'cat'
+
+reqcols <- as.character(as.matrix((sqldf("select distinct a.cat from traincol A join testcol B on a.cat =b.cat "))))
+reqcols<-c(reqcols,"loss")
+
+temp<- as.data.table(temp)
+
+temp<-as.data.table(temp)
+tempt<-as.data.table(tempt)
+
+temp_trn <- temp[,.SD,.SDcols=reqcols]
+
+ rm(ctemp)
+ rm(ctempt)
+ rm(temp)
+ rm(tempt)
+ rm(test) 
+ rm(test_cat_data)
+ rm(test_num_data)
+ rm(train)
+
+testreq <- tempt[,.SD,.SDcols=reqcols]
+
+testreq <- as.matrix(as.numeric(tempt[,.SD,.SDcols=reqcols]))
+
+
+smp_size <- nrow(train_num_data)
+smp<-sample(seq_len(smp_size),0.75*smp_size)
+smp
+temp_trn <- temp[smp,]
+temp_tst <- temp[-smp,]
+
+
+library(xgboost)
+library(readr)
+library(stringr)
+library(caret)
+library(car)
+
+
+
+names(temp_trn)
+c<-length(colnames(temp_trn))
+loss<-temp_trn[,c]
+loss
+#c<-length(colnames(temp_trn))
+  
+  
+  dtrain = xgb.DMatrix(as.matrix(temp_trn[,-c]), label=log(temp_trn$loss))
+  
+  dtest = xgb.DMatrix(as.matrix(temp_tst[,-c]))
+
+xgb_params = list(
+  seed = 123,
+  colsample_bytree = 0.5,
+  subsample = 0.8,
+  eta = 0.05, # replace this with 0.01 for local run to achieve 1113.93
+  objective = 'reg:linear',
+  max_depth = 12,
+  alpha = 1,
+  gamma = 2,
+  min_child_weight = 1,
+  base_score = 7.76
+)
+
+xg_eval_mae <- function (yhat, dtrain) {
+  y = getinfo(dtrain, "label")
+  err= mean(abs((exp(y)-exp(yhat) )))
+  return (list(metric = "error", value = err))
+}
+
+
+# Commented out in order to run within Kaggle sript time restrictions
+# Uncoment and run locally to get best_nrounds of 2813 if used with eta = 0.01
+set.seed = 123
+res = xgb.cv(xgb_params,
+             dtrain,
+             nrounds=1000,
+             nfold=5,
+             early_stopping_rounds=15,
+             print_every_n = 10,
+             verbose= 1, 
+             feval=xg_eval_mae,
+             maximize=FALSE)
+res
+
+k<-res$best_iteration
+k
+best_nrounds<-which.min(res[, test.error.mean])
+  best_nrounds <-780
+  #780
+
+gbdt = xgb.train(xgb_params, dtrain, nrounds=as.integer(best_nrounds/0.8))
+
+#y_pred <- predict(xgb, data.matrix(as.matrix(temp_tst)[,-c]))
+y_pred = exp(predict(gbdt,dtest)) 
+
+length(y_pred)
+length(temp_tst$loss)
+
+mean(abs( y_pred -temp_tst$loss  )   )
+
+
+
+# test code scripting
+
+
+
+
+
+test <- fread("test.csv")
+
+
+test$new<-sqldf(
+  
+  "
+  select
+  case when cat115 in ('A','B','C','D','E','F','G','H','I') then 'M'
+  when cat115 in ('I','J','K','L','M','N','O','P') then 'AN'
+  else 'NT' 
+  END as time
+  from test"
+)
+
+
+test
+num_test <- names(which(  sapply(test,is.numeric)))
+num_test<- setdiff(num_test,c("id"))
+num_test
+cat_test <- names(which(  sapply(test,is.character)))
+cat_test
+
+
+
+test_num_data <- test[,.SD,.SDcols=num_test]
+test_cat_data <- test[,.SD,.SDcols=cat_test]
+
+
+# Split the categorical variables to hot one encoding 
+
+test_cat_data <- test[,.SD,.SDcols=cat_test]
+for (j in 1:117)
+  
+{
+  
+  y<-matrix(0,nrow(test_cat_data),length(unique(test_cat_data[[j]])))
+  
+  c<-unique(test_cat_data[[j]])
+  for (i in 1:length(c)) # for each unique value in a column
+  { 
+    y[which(test_cat_data[[j]] == c[i]),i]<-1
+  }
+  colnames(y)<-paste(names(test_cat_data)[j],unique(test_cat_data[[j]]),sep="")
+  
+  print(i)
+  print(j)
+  colnames(y)
+  test_cat_data<-cbind(test_cat_data,y)
+}
+
+
+tempt <- data.frame(test_cat_data      )
+ctempt<-tempt[-c(1:117)]
+tempt<-ctempt
+tempt <- cbind(tempt,c(test_num_data))
+tempt<-tempt[,.SD,.SDcols=testreq]
+tempt<-as.data.frame(tempt)  
+  
+ftest = xgb.DMatrix(as.matrix(tempt))
+y_pred = exp(predict(gbdt,ftest)) 
+
+
+
+ 
